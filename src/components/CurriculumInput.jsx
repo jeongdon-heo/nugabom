@@ -4,7 +4,7 @@ import { Toast, ObsCard, StudentScroller } from './UI';
 import { callGemini } from '../gemini';
 
 export default function CurriculumInput({ students, observations, onSave, grade, curriculum, apiKey }) {
-  const [selStudent, setSelStudent] = useState(null);
+  const [selStudentIds, setSelStudentIds] = useState([]);
   const [mode, setMode] = useState('curriculum');
   const [selSubject, setSelSubject] = useState(null);
   const [selUnit, setSelUnit] = useState(null);
@@ -22,8 +22,16 @@ export default function CurriculumInput({ students, observations, onSave, grade,
   const allSubjects = GRADE_SUBJECTS[grade] || [];
   const units = selSubject && curData[selSubject] ? curData[selSubject].units : [];
   const standards = selUnit ? units.find(u => u.id === selUnit.id)?.standards || [] : [];
-  const studentObs = selStudent ? observations.filter(o => o.studentId === selStudent.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3) : [];
+  const selStudents = students.filter(s => selStudentIds.includes(s.id));
+  const firstStudent = selStudents[0];
+  const studentObs = firstStudent ? observations.filter(o => o.studentId === firstStudent.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3) : [];
   const quickTags = [...allSubjects.slice(0, 5).map(s => '#' + s), '#자율', '#동아리', '#협동', '#발표', '#성장'];
+
+  const toggleStudent = (id) => {
+    setSelStudentIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const selectAll = () => setSelStudentIds(students.map(s => s.id));
+  const deselectAll = () => setSelStudentIds([]);
 
   const generatePhrases = async (std) => {
     setLoadingPhrases(true); setPhrases([]); setSelectedPhrases([]);
@@ -44,22 +52,33 @@ export default function CurriculumInput({ students, observations, onSave, grade,
   const togglePhrase = (phrase) => setSelectedPhrases(p => p.includes(phrase) ? p.filter(x => x !== phrase) : [...p, phrase]);
 
   const sendRecord = () => {
-    if (!selStudent) return;
+    if (selStudents.length === 0) return;
     if (mode === 'free') {
       if (!freeText.trim()) return;
       const parsed = parseHashtags(freeText);
-      onSave({ id: uid(), studentId: selStudent.id, date: todayStr(), domain: parsed.domain, category: parsed.category, memo: parsed.memo, stdCode: null });
+      selStudents.forEach(s => {
+        onSave({ id: uid(), studentId: s.id, date: todayStr(), domain: parsed.domain, category: parsed.category, memo: parsed.memo, stdCode: null });
+      });
       setFreeText('');
     } else {
       if (selectedPhrases.length === 0 && !extraMemo.trim()) return;
       const memo = [...selectedPhrases, extraMemo.trim()].filter(Boolean).join(', ');
-      onSave({ id: uid(), studentId: selStudent.id, date: todayStr(), domain: '교과', category: selSubject, memo, stdCode: selStd?.code || null });
+      selStudents.forEach(s => {
+        onSave({ id: uid(), studentId: s.id, date: todayStr(), domain: '교과', category: selSubject, memo, stdCode: selStd?.code || null });
+      });
       setSelectedPhrases([]); setExtraMemo('');
     }
-    setToast(`${selStudent.name} 기록 저장!`); setTimeout(() => setToast(null), 1500);
+    const names = selStudents.length <= 3
+      ? selStudents.map(s => s.name).join(', ')
+      : `${selStudents[0].name} 외 ${selStudents.length - 1}명`;
+    setToast(`${names} 기록 저장!`); setTimeout(() => setToast(null), 1500);
   };
 
   const levelColors = { '상': { bg: 'bg-green-50', border: 'border-green-400', text: 'text-green-800' }, '중': { bg: 'bg-blue-50', border: 'border-blue-400', text: 'text-blue-800' }, '하': { bg: 'bg-orange-50', border: 'border-orange-400', text: 'text-orange-800' } };
+
+  const saveLabel = selStudents.length <= 1
+    ? `${firstStudent?.name || ''} 기록 저장`
+    : `${selStudents.length}명 일괄 저장`;
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 130px)' }}>
@@ -68,8 +87,19 @@ export default function CurriculumInput({ students, observations, onSave, grade,
       {/* Student + Mode toggle */}
       <div className="pb-2 border-b border-gray-100 flex-shrink-0">
         <div className="flex justify-between items-center mb-1.5">
-          <span className="text-[11px] text-gray-400 font-semibold">👤 학생 선택</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-gray-400 font-semibold">👤 학생 선택</span>
+            {selStudentIds.length > 0 && (
+              <span className="text-[10px] font-bold text-primary-600 bg-primary-50 px-1.5 py-0.5 rounded-md">
+                {selStudentIds.length}명
+              </span>
+            )}
+          </div>
           <div className="flex gap-1">
+            <button onClick={selStudentIds.length === students.length ? deselectAll : selectAll}
+              className="text-[10px] px-2 py-1 rounded-md font-semibold cursor-pointer border-[1.5px] border-gray-200 bg-white text-gray-400">
+              {selStudentIds.length === students.length ? '해제' : '전체'}
+            </button>
             {[['curriculum', '📚 교과'], ['free', '✏️ 자유']].map(([k, l]) => (
               <button key={k} onClick={() => setMode(k)}
                 className={`text-[10px] px-2.5 py-1 rounded-md font-semibold cursor-pointer
@@ -79,17 +109,25 @@ export default function CurriculumInput({ students, observations, onSave, grade,
             ))}
           </div>
         </div>
-        <StudentScroller students={students} observations={observations} selected={selStudent} onSelect={setSelStudent} />
+        <StudentScroller students={students} observations={observations} multi selectedIds={selStudentIds} onToggle={toggleStudent} />
       </div>
 
-      {!selStudent ? (
+      {selStudents.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-gray-300 text-sm">위에서 학생을 선택해 주세요</div>
       ) : mode === 'free' ? (
         /* FREE MODE */
         <div className="flex-1 flex flex-col">
           <div className="flex-1 overflow-y-auto py-3">
-            {studentObs.length === 0 ? <div className="text-center py-8 text-gray-300 text-sm">아직 기록이 없어요 ✏️</div> : (
+            {selStudents.length === 1 && studentObs.length > 0 ? (
               <div className="flex flex-col gap-1.5">{studentObs.map(o => <ObsCard key={o.id} obs={o} />)}</div>
+            ) : selStudents.length > 1 ? (
+              <div className="text-center py-8 text-gray-400 text-sm">
+                <div className="text-2xl mb-2">👥</div>
+                <div className="font-semibold text-gray-500 mb-1">{selStudents.length}명 선택됨</div>
+                <div className="text-xs text-gray-300">{selStudents.map(s => s.name).join(', ')}</div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-300 text-sm">아직 기록이 없어요 ✏️</div>
             )}
           </div>
           {showTpl && (
@@ -115,15 +153,27 @@ export default function CurriculumInput({ students, observations, onSave, grade,
             <button onClick={() => setShowTpl(!showTpl)} className={`w-9 h-9 rounded-lg border border-gray-200 ${showTpl ? 'bg-primary-50' : 'bg-white'} cursor-pointer flex items-center justify-center text-[15px] flex-shrink-0`}>📋</button>
             <input ref={inputRef} value={freeText} onChange={e => setFreeText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) sendRecord(); }}
-              placeholder={`${selStudent.name}에 대한 자유 메모...`}
+              placeholder={selStudents.length === 1 ? `${firstStudent.name}에 대한 자유 메모...` : `${selStudents.length}명에 대한 자유 메모...`}
               className="flex-1 h-9 rounded-lg border-[1.5px] border-gray-200 px-3 text-[13px] outline-none focus:border-primary-400" />
             <button onClick={sendRecord} disabled={!freeText.trim()}
-              className={`w-9 h-9 rounded-lg border-none text-white flex items-center justify-center text-base flex-shrink-0 ${freeText.trim() ? 'bg-primary-500 cursor-pointer' : 'bg-gray-200'}`}>↑</button>
+              className={`h-9 rounded-lg border-none text-white flex items-center justify-center text-xs font-semibold flex-shrink-0 px-3
+                ${freeText.trim() ? 'bg-primary-500 cursor-pointer' : 'bg-gray-200'}`}>
+              {selStudents.length > 1 ? `${selStudents.length}명 ↑` : '↑'}
+            </button>
           </div>
         </div>
       ) : (
         /* CURRICULUM MODE */
         <div className="flex-1 overflow-y-auto py-2.5">
+          {/* Selected students indicator */}
+          {selStudents.length > 1 && (
+            <div className="mb-3 px-3 py-2 bg-primary-50 rounded-lg border border-primary-200 flex items-center gap-2">
+              <span className="text-sm">👥</span>
+              <span className="text-[12px] text-primary-700 font-semibold">{selStudents.length}명 선택</span>
+              <span className="text-[11px] text-primary-500 truncate">{selStudents.map(s => s.name).join(', ')}</span>
+            </div>
+          )}
+
           {/* Subject */}
           <div className="mb-3">
             <div className="text-[11px] text-gray-400 font-semibold mb-1.5">📂 교과 선택</div>
@@ -231,7 +281,7 @@ export default function CurriculumInput({ students, observations, onSave, grade,
                       </div>
                       <button onClick={sendRecord}
                         className="w-full h-10 rounded-lg border-none bg-primary-500 text-white text-sm font-bold cursor-pointer mt-2.5 flex items-center justify-center gap-1.5 hover:bg-primary-600">
-                        ✓ {selStudent.name} 기록 저장
+                        ✓ {saveLabel}
                       </button>
                     </div>
                   )}
@@ -240,8 +290,8 @@ export default function CurriculumInput({ students, observations, onSave, grade,
             </div>
           )}
 
-          {/* Recent (when no standard selected) */}
-          {studentObs.length > 0 && !selStd && (
+          {/* Recent (when no standard selected, single student) */}
+          {selStudents.length === 1 && studentObs.length > 0 && !selStd && (
             <div className="mt-2">
               <div className="text-[11px] text-gray-400 font-semibold mb-1.5">최근 기록</div>
               <div className="flex flex-col gap-1.5">{studentObs.map(o => <ObsCard key={o.id} obs={o} />)}</div>

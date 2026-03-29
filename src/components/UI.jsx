@@ -72,14 +72,17 @@ export function Btn({ children, variant = 'default', className = '', ...props })
   );
 }
 
-export function StudentScroller({ students, observations, selected, onSelect }) {
+export function StudentScroller({ students, observations, selected, onSelect, multi = false, selectedIds = [], onToggle }) {
+  const isSelected = (s) => multi ? selectedIds.includes(s.id) : selected?.id === s.id;
+  const handleClick = (s) => multi ? onToggle(s.id) : onSelect(s);
+
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
       {students.map(s => {
-        const sel = selected?.id === s.id;
+        const sel = isSelected(s);
         const cnt = observations.filter(o => o.studentId === s.id).length;
         return (
-          <button key={s.id} onClick={() => onSelect(s)}
+          <button key={s.id} onClick={() => handleClick(s)}
             className={`flex-shrink-0 w-[54px] h-[58px] rounded-xl flex flex-col items-center justify-center gap-0.5 cursor-pointer relative transition-all
               ${sel ? 'border-2 border-primary-500 bg-primary-50 shadow-md' : 'border-[1.5px] border-gray-200 bg-white'}`}>
             <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold
@@ -88,6 +91,9 @@ export function StudentScroller({ students, observations, selected, onSelect }) 
             {cnt > 0 && (
               <div className={`absolute -top-0.5 -right-0.5 w-[14px] h-[14px] rounded-full text-white text-[7px] font-bold flex items-center justify-center
                 ${cnt >= 6 ? 'bg-primary-500' : cnt >= 3 ? 'bg-amber-500' : 'bg-red-500'}`}>{cnt}</div>
+            )}
+            {multi && sel && (
+              <div className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-primary-500 text-white text-[9px] font-bold flex items-center justify-center">✓</div>
             )}
           </button>
         );
