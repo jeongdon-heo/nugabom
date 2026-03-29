@@ -53,13 +53,18 @@ export default function App() {
     setSetting('students', students);
   }, [classroom, students, loaded]);
 
-  // Save observations
+  // Save observations — sync IndexedDB with in-memory state
   useEffect(() => {
     if (!loaded) return;
     (async () => {
       try {
-        await db.observations.clear();
-        if (observations.length) await db.observations.bulkPut(observations);
+        const obsIds = new Set(observations.map(o => o.id));
+        const dbKeys = await db.observations.toCollection().primaryKeys();
+        const toDelete = dbKeys.filter(k => !obsIds.has(k));
+        await db.transaction('rw', db.observations, async () => {
+          if (toDelete.length) await db.observations.bulkDelete(toDelete);
+          if (observations.length) await db.observations.bulkPut(observations);
+        });
       } catch (e) { console.error('Save obs error:', e); }
     })();
   }, [observations, loaded]);
