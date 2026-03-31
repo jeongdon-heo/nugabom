@@ -8,23 +8,42 @@ import CurriculumInput from './components/CurriculumInput';
 import NaisReport from './components/NaisReport';
 import AIDraft from './components/AIDraft';
 import Settings from './components/Settings';
+import AuthButton from './components/AuthButton';
+import useAuth from './hooks/useAuth';
+import useFirestoreSync from './hooks/useFirestoreSync';
 import curriculumData from './data/curriculum.json';
 
-// Remove _meta key from curriculum data
 const { _meta, ...rawCurriculum } = curriculumData;
 
+const defaultClassroom = { grade: 4, className: '2반', year: 2026, semester: 1 };
+
 export default function App() {
+  const { user, loading: authLoading, signIn, signOut } = useAuth();
+  const cloud = useFirestoreSync(user);
+
+  // --- Local (Dexie) state ---
   const [page, setPage] = useState('home');
   const [subPage, setSubPage] = useState(null);
-  const [classroom, setClassroom] = useState({ grade: 4, className: '2반', year: 2026, semester: 1 });
-  const [students, setStudents] = useState(DEFAULT_STUDENTS);
-  const [observations, setObservations] = useState([]);
-  const [curriculum, setCurriculum] = useState(rawCurriculum);
-  const [loaded, setLoaded] = useState(false);
+  const [localClassroom, setLocalClassroom] = useState(defaultClassroom);
+  const [localStudents, setLocalStudents] = useState(DEFAULT_STUDENTS);
+  const [localObservations, setLocalObservations] = useState([]);
+  const [localCurriculum, setLocalCurriculum] = useState(rawCurriculum);
+  const [localLoaded, setLocalLoaded] = useState(false);
   const [editObs, setEditObs] = useState(null);
-  const [apiKey, setApiKey] = useState('');
+  const [localApiKey, setLocalApiKey] = useState('');
+  const [migrating, setMigrating] = useState(false);
 
-  // Load from Dexie
+  const isCloud = !!user;
+
+  // Derived state: pick cloud or local
+  const classroom = isCloud ? (cloud.classroom || defaultClassroom) : localClassroom;
+  const students = isCloud ? (cloud.students?.length ? cloud.students : DEFAULT_STUDENTS) : localStudents;
+  const observations = isCloud ? (cloud.observations || []) : localObservations;
+  const curriculum = localCurriculum; // curriculum stays local (large static data)
+  const apiKey = isCloud ? (cloud.apiKey ?? '') : localApiKey;
+  const loaded = isCloud ? cloud.loaded : localLoaded;
+
+  // --- Dexie: load on mount (for local mode) ---
   useEffect(() => {
     (async () => {
       try {
@@ -34,60 +53,109 @@ export default function App() {
         const savedApiKey = await getSetting('apiKey');
         const allObs = await db.observations.toArray();
 
-        if (savedClass) setClassroom(savedClass);
-        if (savedStudents) setStudents(savedStudents);
-        if (savedCurriculum) setCurriculum(savedCurriculum);
-        if (savedApiKey) setApiKey(savedApiKey);
-        if (allObs.length) setObservations(allObs);
+        if (savedClass) setLocalClassroom(savedClass);
+        if (savedStudents) setLocalStudents(savedStudents);
+        if (savedCurriculum) setLocalCurriculum(savedCurriculum);
+        if (savedApiKey) setLocalApiKey(savedApiKey);
+        if (allObs.length) setLocalObservations(allObs);
       } catch (e) {
         console.error('Load error:', e);
       }
-      setLoaded(true);
+      setLocalLoaded(true);
     })();
   }, []);
 
-  // Save classroom & students
+  // --- Dexie: save (only when NOT cloud) ---
   useEffect(() => {
-    if (!loaded) return;
-    setSetting('classroom', classroom);
-    setSetting('students', students);
-  }, [classroom, students, loaded]);
+    if (!localLoaded || isCloud) return;
+    setSetting('classroom', localClassroom);
+    setSetting('students', localStudents);
+  }, [localClassroom, localStudents, localLoaded, isCloud]);
 
-  // Save observations — sync IndexedDB with in-memory state
   useEffect(() => {
-    if (!loaded) return;
+    if (!localLoaded || isCloud) return;
     (async () => {
       try {
-        const obsIds = new Set(observations.map(o => o.id));
+        const obsIds = new Set(localObservations.map(o => o.id));
         const dbKeys = await db.observations.toCollection().primaryKeys();
         const toDelete = dbKeys.filter(k => !obsIds.has(k));
         await db.transaction('rw', db.observations, async () => {
           if (toDelete.length) await db.observations.bulkDelete(toDelete);
-          if (observations.length) await db.observations.bulkPut(observations);
+          if (localObservations.length) await db.observations.bulkPut(localObservations);
         });
       } catch (e) { console.error('Save obs error:', e); }
     })();
-  }, [observations, loaded]);
+  }, [localObservations, localLoaded, isCloud]);
 
-  // Save curriculum edits
   useEffect(() => {
-    if (!loaded) return;
-    setSetting('curriculum', curriculum);
-  }, [curriculum, loaded]);
+    if (!localLoaded || isCloud) return;
+    setSetting('curriculum', localCurriculum);
+  }, [localCurriculum, localLoaded, isCloud]);
 
-  // Save API key
   useEffect(() => {
-    if (!loaded) return;
-    setSetting('apiKey', apiKey);
-  }, [apiKey, loaded]);
+    if (!localLoaded || isCloud) return;
+    setSetting('apiKey', localApiKey);
+  }, [localApiKey, localLoaded, isCloud]);
 
-  const addObs = useCallback(obs => setObservations(p => [...p, obs]), []);
-  const deleteObs = useCallback(id => {
-    if (confirm('이 기록을 삭제할까요?')) setObservations(p => p.filter(o => o.id !== id));
-  }, []);
+  // --- Migration: on first login, push local data to Firestore ---
+  useEffect(() => {
+    if (!user || !cloud.loaded || !localLoaded || migrating) return;
+    // If cloud has no profile yet and local has data, auto-migrate
+    if (cloud.classroom === null && (localObservations.length > 0 || localStudents !== DEFAULT_STUDENTS)) {
+      (async () => {
+        setMigrating(true);
+        try {
+          const { migrateToFirestore } = await import('./migration');
+          await migrateToFirestore(user.uid, {
+            classroom: localClassroom,
+            students: localStudents,
+            observations: localObservations,
+            apiKey: localApiKey,
+          });
+        } catch (e) {
+          console.error('Migration error:', e);
+        }
+        setMigrating(false);
+      })();
+    }
+  }, [user, cloud.loaded, cloud.classroom, localLoaded, migrating, localClassroom, localStudents, localObservations, localApiKey]);
+
+  // --- Callbacks: route to cloud or local ---
+  const setClassroom = useCallback((val) => {
+    if (isCloud) cloud.saveClassroom(val);
+    else setLocalClassroom(val);
+  }, [isCloud, cloud.saveClassroom]);
+
+  const setStudents = useCallback((val) => {
+    if (isCloud) cloud.saveStudents(val);
+    else setLocalStudents(val);
+  }, [isCloud, cloud.saveStudents]);
+
+  const setObservations = useCallback((val) => {
+    if (isCloud) cloud.replaceAllObservations(val);
+    else setLocalObservations(val);
+  }, [isCloud, cloud.replaceAllObservations]);
+
+  const setApiKey = useCallback((val) => {
+    if (isCloud) cloud.saveApiKey(val);
+    else setLocalApiKey(val);
+  }, [isCloud, cloud.saveApiKey]);
+
+  const addObs = useCallback((obs) => {
+    if (isCloud) cloud.addObservation(obs);
+    else setLocalObservations(p => [...p, obs]);
+  }, [isCloud, cloud.addObservation]);
+
+  const deleteObs = useCallback((id) => {
+    if (!confirm('이 기록을 삭제할까요?')) return;
+    if (isCloud) cloud.deleteObservation(id);
+    else setLocalObservations(p => p.filter(o => o.id !== id));
+  }, [isCloud, cloud.deleteObservation]);
+
   const startEditObs = useCallback(obs => setEditObs({ ...obs }), []);
   const saveEditObs = () => {
-    setObservations(p => p.map(o => o.id === editObs.id ? editObs : o));
+    if (isCloud) cloud.updateObservation(editObs);
+    else setLocalObservations(p => p.map(o => o.id === editObs.id ? editObs : o));
     setEditObs(null);
   };
 
@@ -106,6 +174,29 @@ export default function App() {
     { key: 'settings', icon: '⚙️', label: '설정' },
   ];
 
+  // Loading state
+  if (authLoading || (!loaded && !migrating)) {
+    return (
+      <div className="max-w-[480px] mx-auto min-h-screen flex items-center justify-center bg-[#F5F6F8]">
+        <div className="text-center">
+          <div className="text-3xl mb-2">🌱</div>
+          <div className="text-sm text-gray-500 font-medium">불러오는 중...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (migrating) {
+    return (
+      <div className="max-w-[480px] mx-auto min-h-screen flex items-center justify-center bg-[#F5F6F8]">
+        <div className="text-center">
+          <div className="text-3xl mb-2">☁️</div>
+          <div className="text-sm text-gray-500 font-medium">클라우드로 데이터 이전 중...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-[480px] mx-auto min-h-screen font-sans bg-[#F5F6F8]">
       {/* Header */}
@@ -116,8 +207,17 @@ export default function App() {
               <span className="text-[19px] mr-0.5">🌱</span>누가봄
             </span>
           </div>
-          <div className="text-[11px] text-gray-500 bg-gray-100 px-2.5 py-1 rounded-md font-semibold">
-            {classroom.grade}-{classroom.className} · {classroom.semester}학기
+          <div className="flex items-center gap-2">
+            {isCloud && cloud.syncing && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="동기화 중..." />
+            )}
+            {isCloud && !cloud.syncing && (
+              <span className="w-2 h-2 rounded-full bg-green-500" title="동기화 완료" />
+            )}
+            <div className="text-[11px] text-gray-500 bg-gray-100 px-2.5 py-1 rounded-md font-semibold">
+              {classroom.grade}-{classroom.className} · {classroom.semester}학기
+            </div>
+            <AuthButton user={user} loading={authLoading} onSignIn={signIn} onSignOut={signOut} />
           </div>
         </div>
       </div>
