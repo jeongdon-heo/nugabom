@@ -27,7 +27,7 @@ export default function App() {
   const [localClassroom, setLocalClassroom] = useState(defaultClassroom);
   const [localStudents, setLocalStudents] = useState(DEFAULT_STUDENTS);
   const [localObservations, setLocalObservations] = useState([]);
-  const [localCurriculum, setLocalCurriculum] = useState(rawCurriculum);
+  const localCurriculum = rawCurriculum;
   const [localLoaded, setLocalLoaded] = useState(false);
   const [editObs, setEditObs] = useState(null);
   const [localApiKey, setLocalApiKey] = useState('');
@@ -49,13 +49,11 @@ export default function App() {
       try {
         const savedClass = await getSetting('classroom');
         const savedStudents = await getSetting('students');
-        const savedCurriculum = await getSetting('curriculum');
         const savedApiKey = await getSetting('apiKey');
         const allObs = await db.observations.toArray();
 
         if (savedClass) setLocalClassroom(savedClass);
         if (savedStudents) setLocalStudents(savedStudents);
-        if (savedCurriculum) setLocalCurriculum(savedCurriculum);
         if (savedApiKey) setLocalApiKey(savedApiKey);
         if (allObs.length) setLocalObservations(allObs);
       } catch (e) {
@@ -87,10 +85,6 @@ export default function App() {
     })();
   }, [localObservations, localLoaded, isCloud]);
 
-  useEffect(() => {
-    if (!localLoaded || isCloud) return;
-    setSetting('curriculum', localCurriculum);
-  }, [localCurriculum, localLoaded, isCloud]);
 
   useEffect(() => {
     if (!localLoaded || isCloud) return;
