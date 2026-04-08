@@ -7,6 +7,7 @@ export default function CurriculumInput({ students, observations, onSave, grade,
   const [selStudentIds, setSelStudentIds] = useState([]);
   const [mode, setMode] = useState('curriculum');
   const [selSubject, setSelSubject] = useState(null);
+  const [selSemester, setSelSemester] = useState(1);
   const [selUnit, setSelUnit] = useState(null);
   const [selStd, setSelStd] = useState(null);
   const [phrases, setPhrases] = useState([]);
@@ -20,12 +21,16 @@ export default function CurriculumInput({ students, observations, onSave, grade,
 
   const curData = curriculum || {};
   const allSubjects = GRADE_SUBJECTS[grade] || [];
-  const units = selSubject && curData[selSubject] ? curData[selSubject].units : [];
-  const standards = selUnit ? units.find(u => u.id === selUnit.id)?.standards || [] : [];
+  const allUnits = selSubject && curData[selSubject] ? curData[selSubject].units : [];
+  const hasLessons = allUnits.length > 0 && !!allUnits[0].lessons;
+  const units = hasLessons ? allUnits.filter(u => u.semester === selSemester) : allUnits;
+  const standards = selUnit ? (hasLessons ? (units.find(u => u.id === selUnit.id)?.lessons || []) : (units.find(u => u.id === selUnit.id)?.standards || [])) : [];
   const selStudents = students.filter(s => selStudentIds.includes(s.id));
   const firstStudent = selStudents[0];
   const studentObs = firstStudent ? observations.filter(o => o.studentId === firstStudent.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3) : [];
-  const quickTags = [...allSubjects.slice(0, 5).map(s => '#' + s), '#자율', '#동아리', '#협동', '#발표', '#성장'];
+  const subjectTags = allSubjects.map(s => '#' + s);
+  const creativeTags = ['#자율', '#동아리', '#진로'];
+  const behaviorTags = ['#협동', '#리더십', '#발표', '#배려', '#노력', '#태도', '#성장', '#교우관계'];
 
   const toggleStudent = (id) => {
     setSelStudentIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -36,7 +41,9 @@ export default function CurriculumInput({ students, observations, onSave, grade,
   const generatePhrases = async (std) => {
     setLoadingPhrases(true); setPhrases([]); setSelectedPhrases([]);
     try {
-      const prompt = `초등학교 ${grade}학년 ${selSubject} 교과의 성취기준에 대한 관찰 문구를 생성해주세요.\n\n성취기준: ${std.code} - ${std.text}\n\n이 성취기준을 달성한 학생에 대해 교사가 누가기록에 사용할 수 있는 짧은 관찰 문구 8~10개를 생성해주세요.\n\n규칙:\n- 각 문구는 10~25자 내외\n- 성취 수준별로 다양하게 (우수/보통/노력필요)\n- 구체적인 학습 행동 서술\n- JSON 배열로만 응답 (다른 텍스트 없이)\n- 형식: [{"phrase":"문구","level":"상"},{"phrase":"문구","level":"중"},{"phrase":"문구","level":"하"}]\n- level은 "상","중","하" 중 하나`;
+      const topicLabel = hasLessons ? std.topic : `${std.code} - ${std.text}`;
+      const topicType = hasLessons ? '학습 주제' : '성취기준';
+      const prompt = `초등학교 ${grade}학년 ${selSubject} 교과의 ${topicType}에 대한 관찰 문구를 생성해주세요.\n\n${topicType}: ${topicLabel}\n\n이 ${topicType}과 관련하여 학생에 대해 교사가 누가기록에 사용할 수 있는 짧은 관찰 문구 8~10개를 생성해주세요.\n\n규칙:\n- 각 문구는 10~25자 내외\n- 성취 수준별로 다양하게 (우수/보통/노력필요)\n- 구체적인 학습 행동 서술\n- JSON 배열로만 응답 (다른 텍스트 없이)\n- 형식: [{"phrase":"문구","level":"상"},{"phrase":"문구","level":"중"},{"phrase":"문구","level":"하"}]\n- level은 "상","중","하" 중 하나`;
       const txt = await callGemini(prompt, apiKey);
       setPhrases(JSON.parse(txt.replace(/```json|```/g, '').trim()));
     } catch {
@@ -64,7 +71,7 @@ export default function CurriculumInput({ students, observations, onSave, grade,
       if (selectedPhrases.length === 0 && !extraMemo.trim()) return;
       const memo = [...selectedPhrases, extraMemo.trim()].filter(Boolean).join(', ');
       selStudents.forEach(s => {
-        onSave({ id: uid(), studentId: s.id, date: todayStr(), domain: '교과', category: selSubject, memo, stdCode: selStd?.code || null });
+        onSave({ id: uid(), studentId: s.id, date: todayStr(), domain: '교과', category: selSubject, memo, stdCode: hasLessons ? (selStd?.topic || null) : (selStd?.code || null) });
       });
       setSelectedPhrases([]); setExtraMemo('');
     }
@@ -143,10 +150,18 @@ export default function CurriculumInput({ students, observations, onSave, grade,
               ))}
             </div>
           )}
-          <div className="flex gap-1.5 py-1.5 overflow-x-auto border-t border-gray-100 flex-shrink-0">
-            {quickTags.map(tag => (
+          <div className="flex flex-wrap gap-1 py-1.5 border-t border-gray-100 flex-shrink-0">
+            {subjectTags.map(tag => (
               <button key={tag} onClick={() => { setFreeText(p => p ? `${tag} ${p}` : `${tag} `); }}
-                className="flex-shrink-0 border border-gray-200 bg-white rounded-md px-2 py-0.5 text-[10px] text-gray-500 cursor-pointer">{tag}</button>
+                className="border border-blue-200 bg-blue-50 rounded-md px-2 py-0.5 text-[10px] text-blue-600 cursor-pointer">{tag}</button>
+            ))}
+            {creativeTags.map(tag => (
+              <button key={tag} onClick={() => { setFreeText(p => p ? `${tag} ${p}` : `${tag} `); }}
+                className="border border-green-200 bg-green-50 rounded-md px-2 py-0.5 text-[10px] text-green-700 cursor-pointer">{tag}</button>
+            ))}
+            {behaviorTags.map(tag => (
+              <button key={tag} onClick={() => { setFreeText(p => p ? `${tag} ${p}` : `${tag} `); }}
+                className="border border-orange-200 bg-orange-50 rounded-md px-2 py-0.5 text-[10px] text-orange-700 cursor-pointer">{tag}</button>
             ))}
           </div>
           <div className="flex gap-1.5 items-center py-1.5 flex-shrink-0">
@@ -195,6 +210,22 @@ export default function CurriculumInput({ students, observations, onSave, grade,
             )}
           </div>
 
+          {/* Semester (only for lesson-based data) */}
+          {selSubject && curData[selSubject] && hasLessons && (
+            <div className="mb-3">
+              <div className="text-[11px] text-gray-400 font-semibold mb-1.5">📅 학기 선택</div>
+              <div className="flex gap-1">
+                {[1, 2].map(s => (
+                  <button key={s} onClick={() => { setSelSemester(s); setSelUnit(null); setSelStd(null); setPhrases([]); setSelectedPhrases([]); }}
+                    className={`text-xs px-4 py-1.5 rounded-lg font-semibold cursor-pointer transition-all
+                      ${selSemester === s ? 'border-[1.5px] border-blue-600 bg-blue-50 text-blue-800' : 'border-[1.5px] border-gray-200 bg-white text-gray-400'}`}>
+                    {s}학기
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Unit */}
           {selSubject && curData[selSubject] && (
             <div className="mb-3">
@@ -206,7 +237,7 @@ export default function CurriculumInput({ students, observations, onSave, grade,
                     <button key={u.id} onClick={() => { setSelUnit(u); setSelStd(null); setPhrases([]); setSelectedPhrases([]); }}
                       className={`text-left px-3.5 py-2.5 rounded-lg cursor-pointer transition-all text-[13px]
                         ${sel ? 'border-[1.5px] border-blue-600 bg-blue-50 text-blue-800 font-semibold' : 'border border-gray-200 bg-white text-gray-600'}`}>
-                      {u.name}<span className="text-[11px] text-gray-400 ml-1.5">({u.standards.length}개)</span>
+                      {u.name}<span className="text-[11px] text-gray-400 ml-1.5">({(u.lessons || u.standards || []).length}개)</span>
                     </button>
                   );
                 })}
@@ -217,16 +248,17 @@ export default function CurriculumInput({ students, observations, onSave, grade,
           {/* Standards */}
           {selUnit && (
             <div className="mb-3">
-              <div className="text-[11px] text-gray-400 font-semibold mb-1.5">🎯 성취기준</div>
+              <div className="text-[11px] text-gray-400 font-semibold mb-1.5">{hasLessons ? '📝 학습 주제' : '🎯 성취기준'}</div>
               <div className="flex flex-col gap-1.5">
-                {standards.map(st => {
-                  const sel = selStd?.code === st.code;
+                {standards.map((st, idx) => {
+                  const stKey = hasLessons ? st.topic : st.code;
+                  const sel = hasLessons ? (selStd?.topic === st.topic) : (selStd?.code === st.code);
                   return (
-                    <button key={st.code} onClick={() => { setSelStd(st); setSelectedPhrases([]); setExtraMemo(''); generatePhrases(st); }}
+                    <button key={stKey || idx} onClick={() => { setSelStd(st); setSelectedPhrases([]); setExtraMemo(''); generatePhrases(st); }}
                       className={`text-left px-3.5 py-3 rounded-lg cursor-pointer transition-all
                         ${sel ? 'border-2 border-primary-500 bg-primary-50' : 'border border-gray-200 bg-white'}`}>
-                      <div className={`text-[10px] font-bold mb-0.5 ${sel ? 'text-primary-700' : 'text-gray-400'}`}>{st.code}</div>
-                      <div className={`text-[12.5px] leading-relaxed ${sel ? 'text-primary-700' : 'text-gray-600'}`}>{st.text}</div>
+                      {!hasLessons && <div className={`text-[10px] font-bold mb-0.5 ${sel ? 'text-primary-700' : 'text-gray-400'}`}>{st.code}</div>}
+                      <div className={`text-[12.5px] leading-relaxed ${sel ? 'text-primary-700' : 'text-gray-600'}`}>{hasLessons ? st.topic : st.text}</div>
                     </button>
                   );
                 })}
@@ -276,7 +308,7 @@ export default function CurriculumInput({ students, observations, onSave, grade,
                     <div className="mt-2 p-3 bg-green-50/50 rounded-lg border-[1.5px] border-green-200">
                       <div className="text-[10px] text-gray-400 mb-1">📝 기록 미리보기</div>
                       <div className="text-[12.5px] text-gray-800 leading-relaxed">
-                        <span className="text-gray-400 text-[10px]">[{selStd.code}]</span>{' '}
+                        {selStd.code && <><span className="text-gray-400 text-[10px]">[{selStd.code}]</span>{' '}</>}
                         {[...selectedPhrases, extraMemo.trim()].filter(Boolean).join(', ')}
                       </div>
                       <button onClick={sendRecord}
