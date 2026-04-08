@@ -29,6 +29,7 @@ Object.assign(TAG_MAP, {
   '#노력': { domain: '행동특성', category: '학습태도' },
   '#태도': { domain: '행동특성', category: '학습태도' },
   '#교우': { domain: '행동특성', category: '교우관계' },
+  '#교우관계': { domain: '행동특성', category: '교우관계' },
   '#생활': { domain: '행동특성', category: '생활습관' },
   '#정서': { domain: '행동특성', category: '정서' },
 });
